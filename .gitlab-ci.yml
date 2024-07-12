@@ -1,0 +1,102 @@
+stages:
+  - deploy
+  - release
+
+default:
+  image: docker:dind
+  before_script:
+    - docker login -u ${REGISTRY_USER} -p ${REGISTRY_PASS} ${REGISTRY_URL}
+variables:
+  IMAGE_PATH: ${REGISTRY_URL}/voting-service
+  VERSION: v1.0.1
+  SSH_PORT: 8431
+  SSH_USER: root
+
+deploy-to-pre-product:
+  stage: deploy
+  variables:
+    DOMAIN: pre-product.tlow.ir
+    SERVER_NAME: pre-product.tlow.ir
+    HOSTNAME: pre-product
+    SERVICE_PATH: /opt/services/multirepo
+  before_script:
+    - eval $(ssh-agent -s)
+    - chmod 400 ${SSH_PRIVATE_KEY}
+    - ssh-add ${SSH_PRIVATE_KEY}
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+  script:
+    - |
+      # Create directory if not exist
+      ssh -o StrictHostKeyChecking=no -p ${SSH_PORT} ${SSH_USER}@${SERVER_NAME} "
+      [ -d ${SERVICE_PATH} ] || mkdir -p ${SERVICE_PATH}
+      "
+      # change env file
+      sed -i "s/FQDN/${DOMAIN}/g" .env
+      sed -i "s/SERVER_NAME/${HOSTNAME}/g" .env
+      sed -i "s/PIPELINE_ID/${VERSION}/g" .env
+      # move compose and env file to server
+      scp -o StrictHostKeyChecking=no -P${SSH_PORT} .env ${SSH_USER}@${SERVER_NAME}:${SERVICE_PATH}/
+      scp -o StrictHostKeyChecking=no -P${SSH_PORT} compose.yml ${SSH_USER}@${SERVER_NAME}:${SERVICE_PATH}/
+      # deploy service on server
+      ssh -o StrictHostKeyChecking=no -p ${SSH_PORT} ${SSH_USER}@${SERVER_NAME} "
+      docker login -u ${REGISTRY_USER} -p ${REGISTRY_PASS} ${REGISTRY_URL}
+      cd ${SERVICE_PATH}
+      docker compose pull
+      docker compose up -d
+      "
+  environment:
+    name: pre-product
+    url: https://vote.$DOMAIN
+
+deploy-to-production:
+  stage: deploy
+  variables:
+    DOMAIN: production.tlow.ir
+    SERVER_NAME: production.tlow.ir
+    HOSTNAME: production
+    SERVICE_PATH: /opt/services/multirepo
+  before_script:
+    - eval $(ssh-agent -s)
+    - chmod 400 "$SSH_PRIVATE_KEY"
+    - ssh-add "$SSH_PRIVATE_KEY"
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+  script:
+    - |
+      # Create directory if not exist
+      ssh -o StrictHostKeyChecking=no -p ${SSH_PORT} ${SSH_USER}@${SERVER_NAME} "
+      [ -d ${SERVICE_PATH} ] || mkdir -p ${SERVICE_PATH}
+      "
+      # change env file
+      sed -i "s/FQDN/${DOMAIN}/g" .env
+      sed -i "s/SERVER_NAME/${HOSTNAME}/g" .env
+      sed -i "s/PIPELINE_ID/${VERSION}/g" .env
+      # move compose and env file to server
+      scp -o StrictHostKeyChecking=no -P${SSH_PORT} .env ${SSH_USER}@${SERVER_NAME}:${SERVICE_PATH}/
+      scp -o StrictHostKeyChecking=no -P${SSH_PORT} compose.yml ${SSH_USER}@${SERVER_NAME}:${SERVICE_PATH}/
+      # deploy service on server
+      ssh -o StrictHostKeyChecking=no -p ${SSH_PORT} ${SSH_USER}@${SERVER_NAME} "
+      docker login -u ${REGISTRY_USER} -p ${REGISTRY_PASS} ${REGISTRY_URL}
+      cd ${SERVICE_PATH}
+      docker compose pull
+      docker compose up -d
+      "
+  environment:
+    name: production
+    url: https://vote.$DOMAIN
+  when: manual
+
+release_job:
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG
+  # inherit:
+  #   default: false
+  script:
+    - echo "running release_job"
+  release:
+    tag_name: '$CI_COMMIT_TAG'
+    description: '$CI_COMMIT_TAG'
+# for using tag: git tag -a v1.0.1 -m "verstion 1.0.1 voting app"
